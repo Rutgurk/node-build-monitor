@@ -5,6 +5,9 @@ module.exports = function () {
         makeUrl = function () {
             return 'https://api.bitbucket.org/2.0/repositories/' + self.configuration.username + '/' + self.configuration.slug + '/pipelines/?sort=-created_on&pagelen=1';
         },
+	makeSpecificPipelineUrl = function (uuid) {
+            return 'https://api.bitbucket.org/2.0/repositories/' + self.configuration.username + '/' + self.configuration.slug + '/pipelines/' + uuid + '/steps/';
+        }
         makeBasicAuthToken = function() {
            return Buffer.from(self.configuration.username + ':' + self.configuration.apiKey).toString('base64');
         },
@@ -38,18 +41,18 @@ module.exports = function () {
 
           return statusText;
         },
-        simplifyBuild = function (res) {
+        simplifyBuild = function (single_pipeline_body, res) {
             return {
                 id: res.uuid,
-                project: res.repository.name,
-                number: res.build_number,
+                project: res.name,
+                number: single_pipeline_body.build_number,
                 isRunning: !res.completed_on,
-                startedAt: parseDate(res.created_on),
+                startedAt: parseDate(res.started_on),
                 finishedAt: parseDate(res.completed_on),
-                requestedFor: res.creator.display_name,
+                requestedFor: single_pipeline_body.creator.display_name,
                 statusText: getStatusText(res.state.name, (res.state.result || {}).name),
                 status: getStatus(res.state.name, (res.state.result || {}).name),
-                url: res.repository.links.self.href
+                url: single_pipeline_body.repository.links.self.href
             };
         },
         queryBuilds = function (callback) {
@@ -58,16 +61,22 @@ module.exports = function () {
                   callback(error || body.error);
                   return;
                 }
-
-                var builds = [];
-
-                forEachResult(body, function (res) {
-                    builds.push(simplifyBuild(res));
-                });
-
-                callback(error, builds);
-            });
-        };
+		var builds = [];
+		forEachResult(body, function (res) {
+		    var single_pipeline_body = res;
+		    makeRequest(makeSpecificPipelineUrl(single_pipeline_body.uuid), function (error, stepsBody) {
+                        if (error || stepsBody.type === 'error') {
+                  	    callback(error || stepsBody.error);
+                  	    return;
+                	}
+			forEachResult(stepsBody, function (res) {
+                 	    builds.push(simplifyBuild(single_pipeline_body, res));
+                	});
+			callback(error, builds);
+		    });
+		});
+	    });
+	};
 
     self.configure = function (config) {
         self.configuration = config;
